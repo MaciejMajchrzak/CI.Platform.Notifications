@@ -1,0 +1,11 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/CI.Platform.Notifications.Domain/CI.Platform.Notifications.Domain.csproj" />
+    <Project Path="src/CI.Platform.Notifications.Core/CI.Platform.Notifications.Core.csproj" />
+    <Project Path="src/CI.Platform.Notifications.Infrastructure/CI.Platform.Notifications.Infrastructure.csproj" />
+    <Project Path="src/CI.Platform.Notifications.API/CI.Platform.Notifications.API.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/CI.Platform.Notifications.Tests/CI.Platform.Notifications.Tests.csproj" />
+  </Folder>
+</Solution>
