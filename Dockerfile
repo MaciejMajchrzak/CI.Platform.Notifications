@@ -14,7 +14,7 @@ COPY ["src/CI.Platform.Notifications.API/CI.Platform.Notifications.API.csproj", 
 RUN dotnet restore ${API_PROJECT}
 
 COPY . .
-RUN dotnet publish ${API_PROJECT} -c Release -o /app/publish --no-restore
+RUN dotnet restore ${API_PROJECT} && dotnet publish ${API_PROJECT} -c Release -o /app/publish --no-restore
 
 FROM mcr.microsoft.com/dotnet/aspnet:${DOTNET_VERSION} AS runtime
 WORKDIR /app
