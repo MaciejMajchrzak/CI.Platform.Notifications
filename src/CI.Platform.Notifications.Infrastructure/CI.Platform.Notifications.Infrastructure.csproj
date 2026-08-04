@@ -12,4 +12,7 @@
   <ItemGroup>
     <ProjectReference Include="..\CI.Platform.Notifications.Core\CI.Platform.Notifications.Core.csproj" />
   </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="MassTransit" Version="8.3.6" />
+  </ItemGroup>
 </Project>
