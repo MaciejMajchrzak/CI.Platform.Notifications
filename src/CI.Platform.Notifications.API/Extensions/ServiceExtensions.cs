@@ -1,4 +1,5 @@
 using CI.Kernel;
+using CI.Kernel.Http;
 using CI.Kernel.InMemory;
 using CI.Kernel.Redis;
 using CI.Platform.Notifications.Core;
@@ -19,8 +20,33 @@ public static class ServiceExtensions
 {
     public static IServiceCollection AddNotificationsServices(this IServiceCollection services, IConfiguration config)
     {
-        services.AddDbContext<NotificationsDbContext>(opts =>
-            opts.UseNpgsql(config.GetConnectionString("Notifications")));
+        // Tenant context from JWT claims
+        services.AddHttpTenantContext();
+
+        // Data-plane: per-tenant DB routing
+        var tenantsUrl = config["Services:Tenants"];
+        if (!string.IsNullOrEmpty(tenantsUrl))
+        {
+            services.AddHttpTenantDbRouter(tenantsUrl);
+        }
+        else
+        {
+            var cs = config.GetConnectionString("Notifications") ?? string.Empty;
+            services.AddSingleton<ITenantDbRouter>(new NullTenantDbRouter(cs));
+        }
+
+        services.AddSingleton<ITenantDbContextFactory<NotificationsDbContext>>(sp =>
+            new TenantDbContextFactory<NotificationsDbContext>(
+                sp.GetRequiredService<ITenantDbRouter>(),
+                opts => new NotificationsDbContext(opts),
+                "notifications"));
+
+        services.AddScoped(sp =>
+        {
+            var factory   = sp.GetRequiredService<ITenantDbContextFactory<NotificationsDbContext>>();
+            var tenantCtx = sp.GetRequiredService<ITenantContext>();
+            return factory.CreateAsync(tenantCtx.TenantId).GetAwaiter().GetResult();
+        });
 
         services.AddScoped<INotificationsRepository, NotificationsRepository>();
 
