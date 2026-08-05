@@ -7,6 +7,7 @@ using CI.Platform.Notifications.Core.Commands;
 using CI.Platform.Notifications.Core.DTOs;
 using CI.Platform.Notifications.Core.Handlers;
 using CI.Platform.Notifications.Infrastructure;
+using CI.Platform.Notifications.Infrastructure.Consumers;
 using MassTransit;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.EntityFrameworkCore;
@@ -90,6 +91,9 @@ public static class ServiceExtensions
 
         services.AddMassTransit(x =>
         {
+            x.AddConsumer<AppointmentConfirmedNotificationConsumer>();
+            x.AddConsumer<AppointmentCancelledNotificationConsumer>();
+            x.AddConsumer<UserInvitedNotificationConsumer>();
             x.UsingRabbitMq((ctx, cfg) =>
             {
                 cfg.Host(rabbitHost, h =>

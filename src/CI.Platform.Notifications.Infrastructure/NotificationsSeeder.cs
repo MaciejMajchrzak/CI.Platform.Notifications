@@ -126,6 +126,21 @@ public static class NotificationsSeeder
             (NotificationChannel.InApp, "en",
                 "Account suspended",
                 "Your account has been suspended. Please update your billing details to restore access.")),
+
+        Def("user.invited", "Team Invitation",
+            (NotificationChannel.Email, "en",
+                "You've been invited to {{tenantName}}",
+                """
+                <h2>You're Invited!</h2>
+                <p>Hi there,</p>
+                <p>You've been invited to join <strong>{{tenantName}}</strong> on the platform.</p>
+                <p>Click the link below to accept your invitation:</p>
+                <p><a href="{{inviteLink}}">Accept Invitation</a></p>
+                <p>This invitation expires in 7 days.</p>
+                """),
+            (NotificationChannel.InApp, "en",
+                "Invited to {{tenantName}}",
+                "You've been invited to join {{tenantName}}. Check your email to accept.")),
     ];
 
     private static NotificationDefinition Def(
