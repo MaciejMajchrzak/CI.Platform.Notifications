@@ -20,10 +20,9 @@ if (app.Environment.IsDevelopment())
     var retries = 0;
     while (retries < 10)
     {
-        try { await db.Database.MigrateAsync(); break; }
+        try { await db.Database.MigrateAsync(); await NotificationsSeeder.SeedAsync(db); break; }
         catch { retries++; await Task.Delay(3000); }
     }
-    await NotificationsSeeder.SeedAsync(db);
 }
 
 app.MapHealthChecks("/health");
