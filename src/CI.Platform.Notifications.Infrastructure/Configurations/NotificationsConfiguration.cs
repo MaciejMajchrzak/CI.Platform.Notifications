@@ -28,3 +28,45 @@ public sealed class NotificationsProcessedEventConfiguration : IEntityTypeConfig
         b.HasIndex(x => x.MessageId).IsUnique();
     }
 }
+
+public sealed class NotificationDefinitionConfiguration : IEntityTypeConfiguration<NotificationDefinition>
+{
+    public void Configure(EntityTypeBuilder<NotificationDefinition> b)
+    {
+        b.ToTable("NotificationDefinitions");
+        b.HasKey(x => x.Id);
+        b.HasIndex(x => x.Code).IsUnique();
+        b.Property(x => x.Code).HasMaxLength(100).IsRequired();
+        b.Property(x => x.Name).HasMaxLength(200).IsRequired();
+        b.HasMany(x => x.Templates)
+            .WithOne()
+            .HasForeignKey(x => x.DefinitionId)
+            .OnDelete(DeleteBehavior.Cascade);
+    }
+}
+
+public sealed class NotificationTemplateConfiguration : IEntityTypeConfiguration<NotificationTemplate>
+{
+    public void Configure(EntityTypeBuilder<NotificationTemplate> b)
+    {
+        b.ToTable("NotificationTemplates");
+        b.HasKey(x => x.Id);
+        b.HasIndex(x => new { x.Code, x.Channel, x.LanguageCode }).IsUnique();
+        b.Property(x => x.Code).HasMaxLength(100).IsRequired();
+        b.Property(x => x.Channel).HasMaxLength(20).IsRequired();
+        b.Property(x => x.LanguageCode).HasMaxLength(10).IsRequired();
+    }
+}
+
+public sealed class NotificationInboxConfiguration : IEntityTypeConfiguration<NotificationInbox>
+{
+    public void Configure(EntityTypeBuilder<NotificationInbox> b)
+    {
+        b.ToTable("NotificationInbox");
+        b.HasKey(x => x.Id);
+        b.HasIndex(x => new { x.TenantId, x.UserId, x.IsRead });
+        b.Property(x => x.UserId).HasMaxLength(200).IsRequired();
+        b.Property(x => x.Code).HasMaxLength(100).IsRequired();
+        b.Property(x => x.Title).HasMaxLength(500).IsRequired();
+    }
+}

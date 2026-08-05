@@ -4,8 +4,11 @@ namespace CI.Platform.Notifications.Infrastructure;
 
 public sealed class NotificationsDbContext(DbContextOptions<NotificationsDbContext> options) : DbContext(options)
 {
-    public DbSet<NotificationLog>             NotificationLogs  => Set<NotificationLog>();
-    public DbSet<NotificationsProcessedEvent> ProcessedEvents   => Set<NotificationsProcessedEvent>();
+    public DbSet<NotificationLog>             NotificationLogs        => Set<NotificationLog>();
+    public DbSet<NotificationsProcessedEvent> ProcessedEvents         => Set<NotificationsProcessedEvent>();
+    public DbSet<NotificationDefinition>      NotificationDefinitions => Set<NotificationDefinition>();
+    public DbSet<NotificationTemplate>        NotificationTemplates   => Set<NotificationTemplate>();
+    public DbSet<NotificationInbox>           NotificationInbox       => Set<NotificationInbox>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {

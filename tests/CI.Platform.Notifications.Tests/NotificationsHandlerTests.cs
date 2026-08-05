@@ -1,9 +1,11 @@
 using CI.Kernel;
+using CI.Platform.Notifications.Core;
 using CI.Platform.Notifications.Core.Commands;
 using CI.Platform.Notifications.Core.Handlers;
 using CI.Platform.Notifications.Domain.Entities;
 using CI.Platform.Notifications.Infrastructure;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging.Abstractions;
 using Xunit;
 
 namespace CI.Platform.Notifications.Tests;
@@ -27,7 +29,7 @@ public sealed class NotificationsHandlerTests : IDisposable
 
     public void Dispose() => _db.Dispose();
 
-    // ── Send ──────────────────────────────────────────────────────────────
+    // ── Send ──────────────────────────────────────────────────────────────────
 
     [Fact]
     public async Task Send_creates_log_and_returns_id()
@@ -76,7 +78,7 @@ public sealed class NotificationsHandlerTests : IDisposable
         Assert.Equal("promo",            log.TemplateKey);
     }
 
-    // ── Idempotency ───────────────────────────────────────────────────────
+    // ── Idempotency ───────────────────────────────────────────────────────────
 
     [Fact]
     public async Task Send_idempotency_key_deduplicates()
@@ -117,7 +119,7 @@ public sealed class NotificationsHandlerTests : IDisposable
         Assert.NotEqual(r1.Value, r2.Value);
     }
 
-    // ── GetLog ────────────────────────────────────────────────────────────
+    // ── GetLog ────────────────────────────────────────────────────────────────
 
     [Fact]
     public async Task GetLog_returns_dto()
@@ -160,7 +162,7 @@ public sealed class NotificationsHandlerTests : IDisposable
         Assert.Equal(ErrorCodes.NOT_FOUND, result.ErrorCode);
     }
 
-    // ── ListLogs ──────────────────────────────────────────────────────────
+    // ── ListLogs ──────────────────────────────────────────────────────────────
 
     [Fact]
     public async Task ListLogs_tenant_filter_isolates_tenants()
@@ -198,14 +200,13 @@ public sealed class NotificationsHandlerTests : IDisposable
     [Fact]
     public async Task ListLogs_status_filter()
     {
-        // SendNotificationHandler always marks Status=Sent, so we seed a Failed entry manually
         var log = new NotificationLog
         {
-            TenantId    = TenantA,
-            Channel     = "email",
-            Recipient   = "f@a.com",
-            TemplateKey = "fail-tpl",
-            Status      = NotificationStatus.Failed,
+            TenantId      = TenantA,
+            Channel       = "email",
+            Recipient     = "f@a.com",
+            TemplateKey   = "fail-tpl",
+            Status        = NotificationStatus.Failed,
             FailureReason = "SMTP error",
         };
         await _db.NotificationLogs.AddAsync(log);
@@ -251,7 +252,7 @@ public sealed class NotificationsHandlerTests : IDisposable
         Assert.Empty(result.Value.Items);
     }
 
-    // ── ProcessedEvent ────────────────────────────────────────────────────
+    // ── ProcessedEvent ────────────────────────────────────────────────────────
 
     [Fact]
     public async Task IsEventProcessed_returns_false_for_new_messageId()
@@ -271,7 +272,7 @@ public sealed class NotificationsHandlerTests : IDisposable
         Assert.True(processed);
     }
 
-    // ── DTO mapping ───────────────────────────────────────────────────────
+    // ── DTO mapping ───────────────────────────────────────────────────────────
 
     [Fact]
     public async Task GetLog_dto_has_correct_channel_and_recipient()
@@ -283,11 +284,323 @@ public sealed class NotificationsHandlerTests : IDisposable
         var getHandler = new GetNotificationLogHandler(_repo);
         var dto        = (await getHandler.HandleAsync(new GetNotificationLogQuery(sendResult.Value, TenantA), default)).Value!;
 
-        Assert.Equal("push",        dto.Channel);
-        Assert.Equal("device-999",  dto.Recipient);
-        Assert.Equal("offer",       dto.TemplateKey);
+        Assert.Equal("push",          dto.Channel);
+        Assert.Equal("device-999",    dto.Recipient);
+        Assert.Equal("offer",         dto.TemplateKey);
         Assert.Equal("idem-dto-test", dto.IdempotencyKey);
         Assert.Equal(NotificationStatus.Sent, dto.Status);
         Assert.NotNull(dto.SentAt);
     }
+
+    // ── Inbox ─────────────────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task GetInbox_returns_items_for_user()
+    {
+        await _repo.AddInboxItemAsync(new NotificationInbox
+        {
+            TenantId = TenantA, UserId = "user-1", Code = "booking.confirmed",
+            Title = "Confirmed", Body = "Your booking is confirmed",
+        });
+        await _repo.AddInboxItemAsync(new NotificationInbox
+        {
+            TenantId = TenantA, UserId = "user-2", Code = "booking.cancelled",
+            Title = "Cancelled", Body = "Your booking was cancelled",
+        });
+        await _repo.SaveChangesAsync();
+
+        var handler = new GetInboxHandler(_repo);
+        var result  = await handler.HandleAsync(new GetInboxQuery(TenantA, "user-1", 1, 20), default);
+
+        Assert.True(result.IsSuccess);
+        Assert.Equal(1, result.Value!.TotalCount);
+        Assert.Equal("booking.confirmed", result.Value.Items[0].Code);
+    }
+
+    [Fact]
+    public async Task GetInbox_unread_filter()
+    {
+        await _repo.AddInboxItemAsync(new NotificationInbox
+        {
+            TenantId = TenantA, UserId = "u", Code = "a", Title = "T1", Body = "B1", IsRead = false,
+        });
+        var readItem = new NotificationInbox
+        {
+            TenantId = TenantA, UserId = "u", Code = "b", Title = "T2", Body = "B2", IsRead = true,
+        };
+        await _repo.AddInboxItemAsync(readItem);
+        await _repo.SaveChangesAsync();
+
+        var handler   = new GetInboxHandler(_repo);
+        var unreadRes = await handler.HandleAsync(new GetInboxQuery(TenantA, "u", 1, 20, UnreadOnly: true), default);
+
+        Assert.Equal(1, unreadRes.Value!.TotalCount);
+        Assert.False(unreadRes.Value.Items[0].IsRead);
+    }
+
+    [Fact]
+    public async Task MarkInboxRead_sets_IsRead()
+    {
+        var item = new NotificationInbox
+        {
+            TenantId = TenantA, UserId = "user-x", Code = "booking.confirmed",
+            Title = "Hi", Body = "Body", IsRead = false,
+        };
+        await _repo.AddInboxItemAsync(item);
+        await _repo.SaveChangesAsync();
+
+        var handler = new MarkInboxReadHandler(_repo);
+        var result  = await handler.HandleAsync(new MarkInboxReadCommand(item.Id, TenantA, "user-x"), default);
+
+        Assert.True(result.IsSuccess);
+        var updated = await _repo.FindInboxItemAsync(item.Id, TenantA, "user-x");
+        Assert.True(updated!.IsRead);
+    }
+
+    [Fact]
+    public async Task MarkInboxRead_wrong_user_returns_NOT_FOUND()
+    {
+        var item = new NotificationInbox
+        {
+            TenantId = TenantA, UserId = "owner", Code = "x", Title = "T", Body = "B",
+        };
+        await _repo.AddInboxItemAsync(item);
+        await _repo.SaveChangesAsync();
+
+        var handler = new MarkInboxReadHandler(_repo);
+        var result  = await handler.HandleAsync(new MarkInboxReadCommand(item.Id, TenantA, "other"), default);
+
+        Assert.False(result.IsSuccess);
+        Assert.Equal(ErrorCodes.NOT_FOUND, result.ErrorCode);
+    }
+
+    // ── Definitions & templates ───────────────────────────────────────────────
+
+    [Fact]
+    public async Task GetDefinitions_returns_seeded_list()
+    {
+        await _db.NotificationDefinitions.AddAsync(new NotificationDefinition
+        {
+            Code = "test.event", Name = "Test Event",
+            DefaultChannels = (int)NotificationChannelFlags.Email, IsSystem = true,
+        });
+        await _db.SaveChangesAsync();
+
+        var handler = new GetDefinitionsHandler(_repo);
+        var result  = await handler.HandleAsync(new GetDefinitionsQuery(), default);
+
+        Assert.True(result.IsSuccess);
+        Assert.Contains(result.Value!, d => d.Code == "test.event");
+    }
+
+    [Fact]
+    public async Task UpsertTemplate_creates_new_template()
+    {
+        var def = new NotificationDefinition
+        {
+            Code = "booking.confirmed", Name = "Booking Confirmed",
+            DefaultChannels = 9, IsSystem = true,
+        };
+        await _db.NotificationDefinitions.AddAsync(def);
+        await _db.SaveChangesAsync();
+
+        var handler = new UpsertTemplateHandler(_repo);
+        var result  = await handler.HandleAsync(
+            new UpsertTemplateCommand("booking.confirmed", "email", "pl", "Potwierdzenie: {{serviceName}}", "<p>Cześć {{customerName}}</p>"), default);
+
+        Assert.True(result.IsSuccess);
+        var tpl = await _repo.FindTemplateAsync("booking.confirmed", "email", "pl");
+        Assert.NotNull(tpl);
+        Assert.Equal("pl", tpl!.LanguageCode);
+    }
+
+    [Fact]
+    public async Task UpsertTemplate_updates_existing_template()
+    {
+        var def = new NotificationDefinition
+        {
+            Code = "booking.cancelled", Name = "Cancelled",
+            DefaultChannels = 9, IsSystem = true,
+        };
+        var tpl = new NotificationTemplate
+        {
+            Id = Guid.NewGuid(), DefinitionId = def.Id,
+            Code = "booking.cancelled", Channel = "email", LanguageCode = "en",
+            SubjectTemplate = "Old subject", BodyTemplate = "Old body",
+        };
+        def.Templates.Add(tpl);
+        await _db.NotificationDefinitions.AddAsync(def);
+        await _db.SaveChangesAsync();
+
+        var handler = new UpsertTemplateHandler(_repo);
+        await handler.HandleAsync(
+            new UpsertTemplateCommand("booking.cancelled", "email", "en", "New subject", "New body"), default);
+
+        var updated = await _repo.FindTemplateAsync("booking.cancelled", "email", "en");
+        Assert.Equal("New subject", updated!.SubjectTemplate);
+        Assert.Equal("New body",    updated.BodyTemplate);
+    }
+
+    [Fact]
+    public async Task UpsertTemplate_unknown_code_returns_NOT_FOUND()
+    {
+        var handler = new UpsertTemplateHandler(_repo);
+        var result  = await handler.HandleAsync(
+            new UpsertTemplateCommand("does.not.exist", "email", "en", null, "Body"), default);
+
+        Assert.False(result.IsSuccess);
+        Assert.Equal(ErrorCodes.NOT_FOUND, result.ErrorCode);
+    }
+
+    // ── SendTyped + NotificationSender ────────────────────────────────────────
+
+    [Fact]
+    public async Task SendTyped_renders_template_and_creates_inbox_item()
+    {
+        var def = new NotificationDefinition
+        {
+            Code = "booking.confirmed", Name = "Booking Confirmed",
+            DefaultChannels = (int)(NotificationChannelFlags.Email | NotificationChannelFlags.InApp),
+            IsSystem = true,
+        };
+        def.Templates.Add(new NotificationTemplate
+        {
+            DefinitionId = def.Id, Code = "booking.confirmed",
+            Channel = "email", LanguageCode = "en",
+            SubjectTemplate = "Confirmed: {{serviceName}}",
+            BodyTemplate    = "<p>Hi {{customerName}}</p>",
+        });
+        def.Templates.Add(new NotificationTemplate
+        {
+            DefinitionId = def.Id, Code = "booking.confirmed",
+            Channel = "in_app", LanguageCode = "en",
+            SubjectTemplate = "Booking confirmed",
+            BodyTemplate    = "Your {{serviceName}} booking is confirmed",
+        });
+        await _db.NotificationDefinitions.AddAsync(def);
+        await _db.SaveChangesAsync();
+
+        var emailCapture = new CapturingEmailSender();
+        var sender  = new NotificationSender(_repo, emailCapture, NullLogger<NotificationSender>.Instance);
+        var handler = new SendTypedNotificationHandler(sender);
+
+        var result = await handler.HandleAsync(new SendTypedNotificationCommand(
+            "booking.confirmed", TenantA, "user-99", "cust@example.com", "en",
+            new Dictionary<string, object?>
+            {
+                ["serviceName"]   = "Yoga",
+                ["customerName"]  = "Anna",
+            }), default);
+
+        Assert.True(result.IsSuccess);
+
+        // Email was sent with rendered subject
+        Assert.Equal("Confirmed: Yoga",   emailCapture.LastSubject);
+        Assert.Contains("Hi Anna",        emailCapture.LastBody);
+
+        // Inbox item created
+        var inbox = await _repo.ListInboxAsync(TenantA, "user-99", 1, 10, null);
+        Assert.Equal(1, inbox.TotalCount);
+        Assert.Equal("Your Yoga booking is confirmed", inbox.Items[0].Body);
+    }
+
+    [Fact]
+    public async Task SendTyped_falls_back_to_en_template_for_unknown_language()
+    {
+        var def = new NotificationDefinition
+        {
+            Code = "booking.cancelled", Name = "Cancelled",
+            DefaultChannels = (int)NotificationChannelFlags.Email, IsSystem = true,
+        };
+        def.Templates.Add(new NotificationTemplate
+        {
+            DefinitionId = def.Id, Code = "booking.cancelled",
+            Channel = "email", LanguageCode = "en",
+            SubjectTemplate = "Cancelled: {{serviceName}}",
+            BodyTemplate    = "<p>Cancelled</p>",
+        });
+        await _db.NotificationDefinitions.AddAsync(def);
+        await _db.SaveChangesAsync();
+
+        var emailCapture = new CapturingEmailSender();
+        var sender  = new NotificationSender(_repo, emailCapture, NullLogger<NotificationSender>.Instance);
+        var handler = new SendTypedNotificationHandler(sender);
+
+        await handler.HandleAsync(new SendTypedNotificationCommand(
+            "booking.cancelled", TenantA, null, "x@y.com", "zh",
+            new Dictionary<string, object?> { ["serviceName"] = "Pilates" }), default);
+
+        // fell back to EN template
+        Assert.Equal("Cancelled: Pilates", emailCapture.LastSubject);
+    }
+
+    [Fact]
+    public async Task SendTyped_unknown_code_skips_gracefully()
+    {
+        var emailCapture = new CapturingEmailSender();
+        var sender  = new NotificationSender(_repo, emailCapture, NullLogger<NotificationSender>.Instance);
+        var handler = new SendTypedNotificationHandler(sender);
+
+        var result = await handler.HandleAsync(new SendTypedNotificationCommand(
+            "does.not.exist", TenantA, null, "x@y.com", "en",
+            new Dictionary<string, object?>()), default);
+
+        Assert.True(result.IsSuccess); // graceful — unknown code is not an error
+        Assert.Null(emailCapture.LastSubject);
+    }
+
+    [Fact]
+    public async Task SendTyped_email_failure_logs_failed_status_but_returns_success()
+    {
+        var def = new NotificationDefinition
+        {
+            Code = "invoice.overdue", Name = "Invoice Overdue",
+            DefaultChannels = (int)NotificationChannelFlags.Email, IsSystem = true,
+        };
+        def.Templates.Add(new NotificationTemplate
+        {
+            DefinitionId = def.Id, Code = "invoice.overdue",
+            Channel = "email", LanguageCode = "en",
+            SubjectTemplate = "Overdue: {{invoiceNumber}}",
+            BodyTemplate    = "<p>Pay now</p>",
+        });
+        await _db.NotificationDefinitions.AddAsync(def);
+        await _db.SaveChangesAsync();
+
+        var failingSender = new FailingEmailSender();
+        var sender  = new NotificationSender(_repo, failingSender, NullLogger<NotificationSender>.Instance);
+        var handler = new SendTypedNotificationHandler(sender);
+
+        var result = await handler.HandleAsync(new SendTypedNotificationCommand(
+            "invoice.overdue", TenantA, null, "x@y.com", "en",
+            new Dictionary<string, object?> { ["invoiceNumber"] = "INV-001" }), default);
+
+        Assert.True(result.IsSuccess); // sender failure doesn't bubble up
+
+        var logs = await _repo.ListLogsAsync(TenantA, 1, 10, "email", NotificationStatus.Failed);
+        Assert.Equal(1, logs.TotalCount);
+    }
+}
+
+// ── Test doubles ──────────────────────────────────────────────────────────────
+
+file sealed class CapturingEmailSender : IEmailSender
+{
+    public string? LastTo      { get; private set; }
+    public string? LastSubject { get; private set; }
+    public string? LastBody    { get; private set; }
+
+    public Task SendAsync(string to, string subject, string htmlBody, CancellationToken ct = default)
+    {
+        LastTo      = to;
+        LastSubject = subject;
+        LastBody    = htmlBody;
+        return Task.CompletedTask;
+    }
+}
+
+file sealed class FailingEmailSender : IEmailSender
+{
+    public Task SendAsync(string to, string subject, string htmlBody, CancellationToken ct = default)
+        => throw new InvalidOperationException("SMTP unreachable");
 }

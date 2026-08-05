@@ -23,6 +23,7 @@ if (app.Environment.IsDevelopment())
         try { await db.Database.MigrateAsync(); break; }
         catch { retries++; await Task.Delay(3000); }
     }
+    await NotificationsSeeder.SeedAsync(db);
 }
 
 app.MapHealthChecks("/health");

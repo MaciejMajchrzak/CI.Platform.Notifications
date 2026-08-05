@@ -24,7 +24,23 @@ public static class ServiceExtensions
 
         services.AddScoped<INotificationsRepository, NotificationsRepository>();
 
+        // Email sender — SMTP when configured, null-sender otherwise
+        var smtpHost = config["Smtp:Host"];
+        if (!string.IsNullOrEmpty(smtpHost))
+            services.AddScoped<IEmailSender, SmtpEmailSender>();
+        else
+            services.AddScoped<IEmailSender, NullEmailSender>();
+
+        services.AddScoped<INotificationSender, NotificationSender>();
+
+        // Command handlers
         services.AddScoped<ICommandHandler<SendNotificationCommand, Guid>, SendNotificationHandler>();
+        services.AddScoped<ICommandHandler<SendTypedNotificationCommand>, SendTypedNotificationHandler>();
+        services.AddScoped<ICommandHandler<GetInboxQuery, PagedResult<NotificationInboxDto>>, GetInboxHandler>();
+        services.AddScoped<ICommandHandler<MarkInboxReadCommand>, MarkInboxReadHandler>();
+        services.AddScoped<ICommandHandler<GetDefinitionsQuery, IReadOnlyList<NotificationDefinitionDto>>, GetDefinitionsHandler>();
+        services.AddScoped<ICommandHandler<GetTemplatesQuery, IReadOnlyList<NotificationTemplateDto>>, GetTemplatesHandler>();
+        services.AddScoped<ICommandHandler<UpsertTemplateCommand, Guid>, UpsertTemplateHandler>();
         services.AddScoped<ICommandHandler<GetNotificationLogQuery, NotificationLogDto>, GetNotificationLogHandler>();
         services.AddScoped<ICommandHandler<ListNotificationLogsQuery, PagedResult<NotificationLogDto>>, ListNotificationLogsHandler>();
         services.AddScoped<ICommandBus, HandlerDispatcher>();
